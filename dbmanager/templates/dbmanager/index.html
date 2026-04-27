@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Web Database Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: #d4d4d4; display: flex; height: 100vh; overflow: hidden; }
+        .sidebar { width: 280px; background: #252526; border-right: 1px solid #3c3c3c; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 15px; background: #333333; border-bottom: 1px solid #3c3c3c; font-weight: bold; font-size: 14px; }
+        .table-list { list-style: none; padding: 10px; overflow-y: auto; flex: 1; }
+        .table-item { padding: 8px 12px; cursor: pointer; border-radius: 4px; margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
+        .table-item:hover { background: #37373d; }
+        .table-actions { display: none; gap: 5px; }
+        .table-item:hover .table-actions { display: flex; }
+        .action-btn { background: #0e639c; border: none; color: white; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+        .action-btn.delete { background: #a12b2b; }
+        .main-content { flex: 1; display: flex; flex-direction: column; }
+        .toolbar { padding: 10px 15px; background: #333333; border-bottom: 1px solid #3c3c3c; display: flex; gap: 10px; }
+        .toolbar button { background: #0e639c; border: none; color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+        .query-editor { padding: 15px; background: #1e1e1e; border-bottom: 1px solid #3c3c3c; }
+        .query-editor textarea { width: 100%; height: 100px; background: #2d2d30; border: 1px solid #3c3c3c; color: #d4d4d4; padding: 10px; font-family: monospace; resize: vertical; }
+        .query-actions { margin-top: 10px; display: flex; gap: 10px; }
+        .results-panel { flex: 1; overflow: auto; padding: 15px; }
+        .results-table { width: 100%; border-collapse: collapse; background: #2d2d30; }
+        .results-table th { background: #333333; padding: 10px 15px; text-align: left; border-bottom: 2px solid #3c3c3c; position: sticky; top: 0; }
+        .results-table td { padding: 8px 15px; border-bottom: 1px solid #3c3c3c; }
+        .results-table tr:hover { background: #37373d; }
+        .status-message { padding: 10px 15px; background: #2d2d30; border-bottom: 1px solid #3c3c3c; }
+        .status-message.success { background: #2d4a2d; color: #8fbc8f; }
+        .status-message.error { background: #4a2d2d; color: #bc8f8f; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+        .modal.show { display: flex; }
+        .modal-content { background: #252526; padding: 20px; border-radius: 8px; min-width: 400px; max-width: 600px; }
+        .modal-header { font-size: 16px; font-weight: bold; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #3c3c3c; }
+        .modal-body { margin-bottom: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-size: 13px; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; background: #2d2d30; border: 1px solid #3c3c3c; color: #d4d4d4; border-radius: 4px; }
+        .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-primary { background: #0e639c; color: white; }
+        .btn-secondary { background: #3c3c3c; color: #d4d4d4; }
+        .add-column-btn { background: #2d5a2d; color: white; padding: 5px 10px; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
+        .column-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+        .column-row input { flex: 1; }
+        .remove-column { background: #a12b2b; color: white; border: none; width: 30px; height: 30px; border-radius: 4px; cursor: pointer; }
+        .context-menu { display: none; position: fixed; background: #252526; border: 1px solid #3c3c3c; border-radius: 4px; padding: 5px 0; z-index: 1000; }
+        .context-menu.show { display: block; }
+        .context-menu-item { padding: 8px 20px; cursor: pointer; font-size: 13px; }
+        .context-menu-item:hover { background: #094771; }
+        .context-menu-divider { height: 1px; background: #3c3c3c; margin: 5px 0; }
+        .record-actions { display: flex; gap: 5px; }
+        .record-actions button { background: #0e639c; border: none; color: white; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+        .record-actions button.delete { background: #a12b2b; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">DATABASE EXPLORER</div>
+        <ul class="table-list" id="tableList">{% for table in tables %}<li class="table-item" data-table="{{ table }}" oncontextmenu="showContextMenu(event, '{{ table }}')"><span>{{ table }}</span><div class="table-actions"><button class="action-btn" onclick="viewTableData('{{ table }}')">View</button><button class="action-btn delete" onclick="confirmDropTable('{{ table }}')">Drop</button></div></li>{% endfor %}</ul>
+        <div style="padding: 10px;"><button class="btn btn-primary" style="width: 100%;" onclick="showCreateTableModal()">+ Create Table</button></div>
+    </div>
+    <div class="main-content">
+        <div class="toolbar"><button onclick="refreshTables()">Refresh</button><button onclick="showAddRecordModal()">Add Record</button></div>
+        <div class="query-editor"><textarea id="queryInput" placeholder="Enter SQL query here..."></textarea><div class="query-actions"><button class="btn btn-primary" onclick="executeQuery()">Execute</button><button class="btn btn-secondary" onclick="clearResults()">Clear</button></div></div>
+        <div class="status-message" id="statusMessage"></div>
+        <div class="results-panel" id="resultsPanel"><p style="color:#666;text-align:center;margin-top:50px;">Execute a query or select a table</p></div>
+    </div>
+    <div class="modal" id="createTableModal"><div class="modal-content"><div class="modal-header">Create New Table</div><div class="modal-body"><div class="form-group"><label>Table Name</label><input type="text" id="newTableName"></div><div class="form-group"><label>Columns</label><button class="add-column-btn" onclick="addColumnField()">+ Add Column</button><div id="columnFields"></div></div></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('createTableModal')">Cancel</button><button class="btn btn-primary" onclick="createTable()">Create</button></div></div></div>
+    <div class="modal" id="recordModal"><div class="modal-content"><div class="modal-header" id="recordModalTitle">Add Record</div><div class="modal-body" id="recordModalBody"></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('recordModal')">Cancel</button><button class="btn btn-primary" onclick="saveRecord()">Save</button></div></div></div>
+    <div class="context-menu" id="contextMenu"><div class="context-menu-item" onclick="viewTableData(currentContextMenuTable)">Show All Records</div><div class="context-menu-item" onclick="showAddRecordModalForTable()">Add Record</div><div class="context-menu-divider"></div><div class="context-menu-item" onclick="confirmDropTable(currentContextMenuTable)" style="color:#bc8f8f;">Drop Table</div></div>
+    <script>
+        let currentTable = null, currentContextMenuTable = null, editingRecordId = null, editingRecordIdColumn = null;
+        document.addEventListener('DOMContentLoaded', function() { addColumnField(); });
+        function addColumnField() { const c = document.getElementById('columnFields'), d = document.createElement('div'); d.className = 'column-row'; d.innerHTML = '<input type="text" placeholder="Column name" class="col-name"><select class="col-type"><option value="INTEGER">INTEGER</option><option value="TEXT">TEXT</option><option value="REAL">REAL</option></select><label><input type="checkbox" class="col-pk"> PK</label><button class="remove-column" onclick="this.parentElement.remove()">X</button>'; c.appendChild(d); }
+        function showCreateTableModal() { document.getElementById('newTableName').value=''; document.getElementById('columnFields').innerHTML=''; addColumnField(); document.getElementById('createTableModal').classList.add('show'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+        async function createTable() { const tn = document.getElementById('newTableName').value.trim(); if (!tn) { showStatus('Enter table name', 'error'); return; } const cols = []; document.querySelectorAll('#columnFields .column-row').forEach(r => { const n = r.querySelector('.col-name').value.trim(), t = r.querySelector('.col-type').value, pk = r.querySelector('.col-pk').checked; if (n) cols.push({name: n, type: t, primary_key: pk, not_null: pk}); }); if (!cols.length) { showStatus('Add at least one column', 'error'); return; } try { const res = await fetch('/create_table/', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table_name:tn,columns:cols})}); const d = await res.json(); if (d.success) { showStatus(d.message,'success'); closeModal('createTableModal'); refreshTables(); } else showStatus(d.message,'error'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        async function refreshTables() { try { const res = await fetch('/get_tables/'), d = await res.json(); const tl = document.getElementById('tableList'); tl.innerHTML = ''; d.tables.forEach(t => { const li = document.createElement('li'); li.className='table-item'; li.innerHTML='<span>'+t+'</span><div class="table-actions"><button class="action-btn" onclick="viewTableData(\''+t+'\')">View</button><button class="action-btn delete" onclick="confirmDropTable(\''+t+'\')">Drop</button></div>'; tl.appendChild(li); }); showStatus('Tables refreshed','success'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        async function viewTableData(tn) { currentTable = tn; try { const res = await fetch('/get_table_data/'+encodeURIComponent(tn)+'/'), d = await res.json(); if (d.success) { renderResults(d.columns, d.rows, tn); showStatus('Showing '+d.rows.length+' records from '+tn,'success'); } else showStatus(d.message,'error'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        function renderResults(cols, rows, tn) { const p = document.getElementById('resultsPanel'); if (!cols.length && !rows.length) { p.innerHTML='<p>No results</p>'; return; } let h = '<table class="results-table"><thead><tr>'; cols.forEach(c => h+='<th>'+c+'</th>'); if (tn) h+='<th style="width:120px;">Actions</th>'; h+='</tr></thead><tbody>'; rows.forEach(r => { h+='<tr>'; r.forEach(v => h+='<td>'+(v!==null?v:'NULL')+'</td>'); if (tn && cols.length>0) h+='<td class="record-actions"><button onclick="editRecord(\''+tn+'\',\''+cols[0]+'\',\''+r[0]+'\')">Edit</button><button class="delete" onclick="deleteRecord(\''+tn+'\',\''+cols[0]+'\',\''+r[0]+'\')">Delete</button></td>'; h+='</tr>'; }); h+='</tbody></table>'; p.innerHTML=h; }
+        async function executeQuery() { const q = document.getElementById('queryInput').value.trim(); if (!q) { showStatus('Enter a query','error'); return; } try { const fd = new FormData(); fd.append('query',q); const res = await fetch('/execute_query/',{method:'POST',body:fd}), d = await res.json(); showStatus(d.message, d.success?'success':'error'); if (d.columns && d.columns.length>0) renderResults(d.columns, d.rows, null); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        function clearResults() { document.getElementById('queryInput').value=''; document.getElementById('resultsPanel').innerHTML='<p style="color:#666;text-align:center;margin-top:50px;">Execute a query or select a table</p>'; document.getElementById('statusMessage').textContent=''; document.getElementById('statusMessage').className='status-message'; }
+        function showStatus(m,t) { const e=document.getElementById('statusMessage'); e.textContent=m; e.className='status-message '+t; }
+        async function confirmDropTable(tn) { if (!confirm('Drop table "'+tn+'"?')) return; try { const res = await fetch('/drop_table/'+encodeURIComponent(tn)+'/',{method:'POST'}), d = await res.json(); if (d.success) { showStatus(d.message,'success'); refreshTables(); clearResults(); } else showStatus(d.message,'error'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        function showAddRecordModal() { if (!currentTable) { showStatus('Select a table first','error'); return; } showAddRecordModalForTable(currentTable); }
+        async function showAddRecordModalForTable(tn) { const t = tn || currentTable; if (!t) { showStatus('No table selected','error'); return; } editingRecordId = null; editingRecordIdColumn = null; document.getElementById('recordModalTitle').textContent = 'Add Record to '+t; try { const res = await fetch('/get_table_columns/'+encodeURIComponent(t)+'/'), d = await res.json(); let h = ''; d.columns.forEach(c => h+='<div class="form-group"><label>'+c+'</label><input type="text" class="record-field" data-column="'+c+'"></div>'); document.getElementById('recordModalBody').innerHTML = h; document.getElementById('recordModal').classList.add('show'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        async function editRecord(tn, ic, rid) { editingRecordId = rid; editingRecordIdColumn = ic; document.getElementById('recordModalTitle').textContent = 'Edit Record'; try { const res = await fetch('/get_table_columns/'+encodeURIComponent(tn)+'/'), d = await res.json(); let h = ''; d.columns.forEach(c => h+='<div class="form-group"><label>'+c+'</label><input type="text" class="record-field" data-column="'+c+'"></div>'); document.getElementById('recordModalBody').innerHTML = h; document.getElementById('recordModal').classList.add('show'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        async function saveRecord() { if (!currentTable) { showStatus('No table selected','error'); return; } const data = {}; document.querySelectorAll('.record-field').forEach(f => { const v=f.value.trim(); data[f.dataset.column]=v===''?null:v; }); try { let url, method; if (editingRecordId !== null) { url='/update_record/'+encodeURIComponent(currentTable)+'/'+encodeURIComponent(editingRecordId)+'/'+encodeURIComponent(editingRecordIdColumn)+'/'; method='POST'; } else { url='/add_record/'+encodeURIComponent(currentTable)+'/'; method='POST'; } const res = await fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}), r = await res.json(); if (r.success) { showStatus(r.message,'success'); closeModal('recordModal'); viewTableData(currentTable); } else showStatus(r.message,'error'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        async function deleteRecord(tn, ic, rid) { if (!confirm('Delete this record?')) return; try { const res = await fetch('/delete_record/'+encodeURIComponent(tn)+'/'+encodeURIComponent(rid)+'/'+encodeURIComponent(ic)+'/',{method:'POST'}), d = await res.json(); if (d.success) { showStatus(d.message,'success'); viewTableData(tn); } else showStatus(d.message,'error'); } catch(e) { showStatus('Error: '+e.message,'error'); } }
+        function showContextMenu(e, tn) { e.preventDefault(); currentContextMenuTable=tn; const m=document.getElementById('contextMenu'); m.style.left=e.pageX+'px'; m.style.top=e.pageY+'px'; m.classList.add('show'); }
+        document.addEventListener('click', function() { document.getElementById('contextMenu').classList.remove('show'); });
+    </script>
+</body>
+</html>
