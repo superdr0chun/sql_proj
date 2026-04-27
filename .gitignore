@@ -20,7 +20,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Django
 *.log
@@ -28,15 +27,14 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Environment
-.env
-.env.local
-.env.*
-.venv/
+# Virtual Environment
 venv/
+env/
 ENV/
+.venv/
+.env/
 
-# Editors
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -48,7 +46,10 @@ Thumbs.db
 
 # Coverage
 .coverage
+coverage/
 htmlcov/
-.coverage.*
-.coverage
+
+# Temporary files
+*.tmp
+*.temp
 ```
