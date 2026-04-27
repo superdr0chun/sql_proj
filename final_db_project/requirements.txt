@@ -1,0 +1,4 @@
+# Django and core dependencies
+Django>=4.2,<5.0
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.0
