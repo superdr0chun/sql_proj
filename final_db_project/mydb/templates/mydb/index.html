@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebDB Manager</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; background: #f0f0f0; }
+        #sidebar { width: 300px; background: #2c3e50; color: white; display: flex; flex-direction: column; border-right: 1px solid #1a252f; }
+        #main { flex: 1; display: flex; flex-direction: column; position: relative; }
+        #toolbar { padding: 10px; background: #ecf0f1; border-bottom: 1px solid #bdc3c7; display: flex; gap: 10px; align-items: center; }
+        #content { flex: 1; padding: 20px; overflow: auto; }
+        
+        .tree-node { padding: 5px 10px; cursor: pointer; user-select: none; display: flex; align-items: center; }
+        .tree-node:hover { background: #34495e; }
+        .tree-children { margin-left: 20px; display: none; }
+        .tree-children.open { display: block; }
+        .icon { margin-right: 8px; width: 16px; text-align: center; }
+        
+        #context-menu { position: absolute; background: white; border: 1px solid #ccc; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); display: none; z-index: 1000; min-width: 150px; }
+        #context-menu div { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee; }
+        #context-menu div:hover { background: #f0f0f0; }
+        #context-menu div:last-child { border-bottom: none; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 20px; border-radius: 5px; width: 400px; max-width: 90%; }
+        .modal h3 { margin-top: 0; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; box-sizing: border-box; }
+        .btn { padding: 8px 15px; background: #3498db; color: white; border: none; cursor: pointer; border-radius: 3px; }
+        .btn-danger { background: #e74c3c; }
+        .btn-success { background: #2ecc71; }
+        
+        #sql-editor { width: 100%; height: 150px; font-family: monospace; margin-bottom: 10px; }
+        #result-area { background: white; border: 1px solid #ddd; padding: 10px; overflow: auto; max-height: 400px; }
+        table.data-grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+        table.data-grid th, table.data-grid td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        table.data-grid th { background: #f8f9fa; }
+
+        .dynamic-col-row { display: flex; gap: 5px; margin-bottom: 5px; align-items: center; }
+        .dynamic-col-row input { flex: 1; }
+        .dynamic-col-row select { width: 100px; }
+        .dynamic-col-row input[type="number"] { width: 60px; }
+        .dynamic-col-row input[type="checkbox"] { width: 20px; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <div style="padding: 15px; background: #1a252f; font-weight: bold;">DB Manager</div>
+    <div style="padding: 10px;">
+        <button class="btn btn-success" onclick="openAddServerModal()">+ Add Server</button>
+    </div>
+    <div id="tree-root"></div>
+</div>
+
+<div id="main">
+    <div id="toolbar">
+        <span id="current-context">Select a table</span>
+        <button class="btn" onclick="runSQL()" style="margin-left: auto;">Run SQL (Ctrl+Enter)</button>
+    </div>
+    <div id="content">
+        <textarea id="sql-editor" placeholder="SELECT * FROM ..."></textarea>
+        <div id="result-area">Results will appear here...</div>
+    </div>
+</div>
+
+<div id="context-menu"></div>
+
+<div id="modal-add-server" class="modal">
+    <div class="modal-content">
+        <h3>Add Server</h3>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="srv-name" placeholder="My Local DB">
+        </div>
+        <div class="form-group">
+            <label>Connection String (Empty for Local SQLite)</label>
+            <input type="text" id="srv-conn" placeholder="postgresql://user:pass@localhost/db">
+            <small style="color:gray">Leave empty to create a local file database.</small>
+        </div>
+        <button class="btn" onclick="submitAddServer()">Connect</button>
+        <button class="btn btn-danger" onclick="closeModal('modal-add-server')">Cancel</button>
+    </div>
+</div>
+
+<div id="modal-create-table" class="modal">
+    <div class="modal-content" style="width: 600px;">
+        <h3>Create Table</h3>
+        <div class="form-group">
+            <label>Table Name</label>
+            <input type="text" id="tbl-name">
+        </div>
+        <label>Columns:</label>
+        <div id="columns-container"></div>
+        <button class="btn" style="margin-top:10px;" onclick="addColumnRow()">+ Add Column</button>
+        <hr>
+        <button class="btn btn-success" onclick="submitCreateTable()">Create</button>
+        <button class="btn btn-danger" onclick="closeModal('modal-create-table')">Cancel</button>
+    </div>
+</div>
+
+<div id="modal-add-row" class="modal">
+    <div class="modal-content">
+        <h3>Add Row</h3>
+        <div id="row-form-container"></div>
+        <br>
+        <button class="btn btn-success" onclick="submitAddRow()">Save</button>
+        <button class="btn btn-danger" onclick="closeModal('modal-add-row')">Cancel</button>
+    </div>
+</div>
+
+<script>
+    let currentServerId = null;
+    let currentTable = null;
+    let contextTarget = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadServers();
+        document.addEventListener('click', () => document.getElementById('context-menu').style.display = 'none');
+        document.getElementById('sql-editor').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') runSQL();
+        });
+    });
+
+    function loadServers() {
+        fetch('/api/servers')
+            .then(r => r.json())
+            .then(data => {
+                const root = document.getElementById('tree-root');
+                root.innerHTML = '';
+                data.servers.forEach(srv => {
+                    const node = createTreeNode(srv.name, srv.id, 'server');
+                    const dbNode = createTreeNode(srv.db_name, srv.id, 'db', srv.id); 
+                    node.appendChild(dbNode);
+                    root.appendChild(node);
+                });
+            });
+    }
+
+    function createTreeNode(label, id, type, parentId = null) {
+        const div = document.createElement('div');
+        div.className = 'tree-item';
+        
+        const content = document.createElement('div');
+        content.className = 'tree-node';
+        content.innerHTML = `<span class="icon">${type === 'server' ? '🖥️' : type === 'db' ? '📊' : '📋'}</span> ${label}`;
+        content.oncontextmenu = (e) => showContextMenu(e, { type, id, name: label, parentId });
+        content.onclick = (e) => {
+            e.stopPropagation();
+            if (type === 'table') {
+                loadTableInfo(parentId, label);
+                currentServerId = parentId;
+                currentTable = label;
+                document.getElementById('current-context').innerText = `${parentId} > ${label}`;
+            } else if (type === 'db' || type === 'server') {
+                const children = div.querySelector('.tree-children');
+                if (children) {
+                    children.classList.toggle('open');
+                    if (type === 'db' && !children.hasChildNodes() && !children.loaded) {
+                        loadTables(parentId, children);
+                        children.loaded = true;
+                    }
+                }
+            }
+        };
+
+        div.appendChild(content);
+        
+        const childrenDiv = document.createElement('div');
+        childrenDiv.className = 'tree-children';
+        div.appendChild(childrenDiv);
+
+        return div;
+    }
+
+    function loadTables(serverId, container) {
+        fetch(`/api/server/${serverId}/tables`)
+            .then(r => r.json())
+            .then(tables => {
+                tables.forEach(tbl => {
+                    container.appendChild(createTreeNode(tbl, tbl, 'table', serverId));
+                });
+            });
+    }
+
+    function loadTableInfo(serverId, tableName) {
+        fetch(`/api/server/${serverId}/table/${tableName}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) { alert(data.error); return; }
+                renderResult(data.columns, data.data);
+            });
+    }
+
+    function renderResult(columns, data) {
+        const area = document.getElementById('result-area');
+        if (!data || data.length === 0) {
+            area.innerHTML = '<p>No data or operation successful.</p>';
+            return;
+        }
+        
+        let html = '<table class="data-grid"><thead><tr>';
+        const colNames = Object.keys(data[0]);
+        colNames.forEach(c => html += `<th>${c}</th>`);
+        html += '</tr></thead><tbody>';
+        
+        data.forEach(row => {
+            html += '<tr>';
+            colNames.forEach(c => html += `<td>${row[c]}</td>`);
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        
+        let structHtml = '<div style="margin-bottom:10px; font-size:12px; color:#555;"><b>Structure:</b> ';
+        if(columns) {
+            structHtml += columns.map(c => `${c.name} (${c.type})`).join(', ');
+        }
+        structHtml += '</div>';
+        
+        area.innerHTML = structHtml + html;
+    }
+
+    function runSQL() {
+        if (!currentServerId) { alert('Select a server/table first'); return; }
+        const sql = document.getElementById('sql-editor').value;
+        fetch(`/api/server/${currentServerId}/sql`, {
+            method: 'POST',
+            body: JSON.stringify({ sql })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.success) {
+                if (res.data) renderResult(null, res.data);
+                else alert(res.message);
+            } else {
+                alert('Error: ' + res.error);
+            }
+        });
+    }
+
+    function showContextMenu(e, target) {
+        e.preventDefault();
+        e.stopPropagation();
+        contextTarget = target;
+        const menu = document.getElementById('context-menu');
+        menu.style.display = 'block';
+        menu.style.left = e.pageX + 'px';
+        menu.style.top = e.pageY + 'px';
+        menu.innerHTML = '';
+
+        if (target.type === 'server') {
+            addMenuItem('Create Database (Simulated)', () => alert('In this mode, Server IS the DB connection.'));
+            addMenuItem('Delete Server', deleteServer);
+        } else if (target.type === 'db') {
+            addMenuItem('Create Table', openCreateTableModal);
+            addMenuItem('Delete Database', () => alert('Cannot delete connected DB file safely from UI yet.'));
+        } else if (target.type === 'table') {
+            addMenuItem('View Data', () => loadTableInfo(target.parentId, target.name));
+            addMenuItem('Add Row', openAddRowModal);
+            addMenuItem('Delete Table', deleteTable);
+            addMenuItem('Properties', () => alert(`Table: ${target.name}\nServer: ${target.parentId}`));
+        }
+    }
+
+    function addMenuItem(text, onClick) {
+        const div = document.createElement('div');
+        div.innerText = text;
+        div.onclick = () => {
+            document.getElementById('context-menu').style.display = 'none';
+            onClick();
+        };
+        document.getElementById('context-menu').appendChild(div);
+    }
+
+    function deleteServer() {
+        if(!confirm('Delete server?')) return;
+        fetch(`/api/server/${contextTarget.id}/delete`, {method: 'DELETE'})
+            .then(() => loadServers());
+    }
+
+    function deleteTable() {
+        if(!confirm(`Delete table ${contextTarget.name}?`)) return;
+        fetch(`/api/server/${contextTarget.parentId}/table/${contextTarget.name}/delete`, {method: 'DELETE'})
+            .then(() => loadServers());
+    }
+
+    function openAddServerModal() { document.getElementById('modal-add-server').style.display = 'flex'; }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+    
+    function submitAddServer() {
+        const name = document.getElementById('srv-name').value;
+        const conn = document.getElementById('srv-conn').value;
+        fetch('/api/servers/add', {
+            method: 'POST',
+            body: JSON.stringify({ name, connection_string: conn })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if(res.success) { closeModal('modal-add-server'); loadServers(); }
+            else alert(res.error);
+        });
+    }
+
+    function openCreateTableModal() {
+        document.getElementById('tbl-name').value = '';
+        const container = document.getElementById('columns-container');
+        container.innerHTML = '';
+        addColumnRow();
+        document.getElementById('modal-create-table').style.display = 'flex';
+    }
+
+    function addColumnRow() {
+        const container = document.getElementById('columns-container');
+        const div = document.createElement('div');
+        div.className = 'dynamic-col-row';
+        div.innerHTML = `
+            <input type="text" placeholder="Col Name" class="col-name">
+            <select class="col-type">
+                <option value="INTEGER">INT</option>
+                <option value="VARCHAR">VARCHAR</option>
+                <option value="TEXT">TEXT</option>
+                <option value="FLOAT">FLOAT</option>
+                <option value="BOOLEAN">BOOL</option>
+                <option value="DATETIME">DATETIME</option>
+            </select>
+            <input type="number" placeholder="Size" class="col-size" style="display:none">
+            <label><input type="checkbox" class="col-pk"> PK</label>
+            <label><input type="checkbox" class="col-null" checked> Null</label>
+        `;
+        div.querySelector('.col-type').onchange = (e) => {
+            div.querySelector('.col-size').style.display = e.target.value === 'VARCHAR' ? 'block' : 'none';
+        };
+        container.appendChild(div);
+    }
+
+    function submitCreateTable() {
+        const name = document.getElementById('tbl-name').value;
+        const rows = document.querySelectorAll('#columns-container .dynamic-col-row');
+        const cols = [];
+        rows.forEach(r => {
+            cols.push({
+                name: r.querySelector('.col-name').value,
+                type: r.querySelector('.col-type').value,
+                size: r.querySelector('.col-size').value,
+                pk: r.querySelector('.col-pk').checked,
+                nullable: r.querySelector('.col-null').checked
+            });
+        });
+
+        fetch(`/api/server/${contextTarget.parentId}/table/create`, {
+            method: 'POST',
+            body: JSON.stringify({ table_name: name, columns: cols })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if(res.success) { closeModal('modal-create-table'); loadServers(); }
+            else alert(res.error);
+        });
+    }
+
+    function openAddRowModal() {
+        fetch(`/api/server/${contextTarget.parentId}/table/${contextTarget.name}`)
+        .then(r => r.json())
+        .then(info => {
+            const container = document.getElementById('row-form-container');
+            container.innerHTML = '';
+            info.columns.forEach(col => {
+                const div = document.createElement('div');
+                div.className = 'form-group';
+                div.innerHTML = `<label>${col.name} (${col.type})</label><input type="text" class="row-input" data-col="${col.name}">`;
+                container.appendChild(div);
+            });
+            document.getElementById('modal-add-row').style.display = 'flex';
+        });
+    }
+
+    function submitAddRow() {
+        const inputs = document.querySelectorAll('.row-input');
+        const data = {};
+        inputs.forEach(inp => {
+            data[inp.dataset.col] = inp.value;
+        });
+
+        fetch(`/api/server/${contextTarget.parentId}/table/${contextTarget.name}/insert`, {
+            method: 'POST',
+            body: JSON.stringify({ data })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if(res.success) { closeModal('modal-add-row'); loadTableInfo(contextTarget.parentId, contextTarget.name); }
+            else alert(res.error);
+        });
+    }
+</script>
+</body>
+</html>
